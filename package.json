@@ -1,0 +1,49 @@
+{
+  "name": "flashlight",
+  "version": "0.0.0",
+  "description": "Command-line tool to inspect your Node.js dependencies for potential problems. ",
+  "main": "index.js",
+  "scripts": {
+    "test": "./node_modules/.bin/mocha --reporter list"
+  },
+  "bin": {
+    "flashlight": "./index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/stdarg/flashlight.git"
+  },
+  "keywords": [
+    "dependency",
+    "dep",
+    "test",
+    "check",
+    "project",
+    "health",
+    "problem",
+    "tool",
+    "cli",
+    "command",
+    "command-line",
+    "line"
+  ],
+  "author": "Edmond Meinfelder",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/stdarg/flashlight/issues"
+  },
+  "homepage": "https://github.com/stdarg/flashlight",
+  "devDependencies": {
+      "mocha": "1.16.1"
+  },
+  "dependencies": {
+      "colors": "0.6.2",
+      "findit": "1.1.0",
+      "have": "stdarg/have",
+      "is2": "0.0.11",
+      "lodash": "2.4.1",
+      "npm-stats": "0.2.1",
+      "optimist": "0.6.0",
+      "semver": "2.2.1"
+  }
+}
