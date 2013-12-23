@@ -27,7 +27,7 @@
     "command-line",
     "line"
   ],
-  "author": "Edmond Meinfelder",
+  "author": "Edmond Meinfelder <edmond@stdarg.com> (https://github.com/stdarg)",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/stdarg/flashlight/issues"
@@ -37,6 +37,7 @@
       "mocha": "1.16.1"
   },
   "dependencies": {
+      "async": "0.2.9",
       "colors": "0.6.2",
       "findit": "1.1.0",
       "have": "stdarg/have",
@@ -44,6 +45,8 @@
       "lodash": "2.4.1",
       "npm-stats": "0.2.1",
       "optimist": "0.6.0",
-      "semver": "2.2.1"
+      "semver": "2.2.1",
+      "semver-utils": "1.1.0",
+      "sprintf.js": "0.1.3"
   }
 }

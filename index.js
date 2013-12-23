@@ -1,10 +1,13 @@
 'use strict';
 require('colors');
+require('sprintf.js');
+var async = require('async');
 var path = require('path');
 var semver = require('semver');
 var have = require('have');
 var _ = require('lodash');
 //var registry = require('npm-stats');
+var NO_VERSION = 'NO_VERSION';
 
 /**
  * Where execution starts. Uses findit to locate all the package.json files.
@@ -17,16 +20,41 @@ function main() {
 
     finder.on('file', function (file) {
         if (path.basename(file) === 'package.json') {
-            //console.log(file);
-            modules.push({
-                dir: path.dirname(file),
-                packageJson: path.resolve(file)
-            });
+            modules.push({ packageJson: path.resolve(file) });
         }
     });
 
     finder.on('end', function () {
         processModules(modules);
+    });
+}
+
+/**
+ * Perform an 'npm install & npm test' command in the appropriate directory. Calls a callback
+ * when done.
+ * @param {String} cwd The working directory for the `npm test` command.
+ * @param {Function} cb The callback, called when done. An error indicates the tests failed.
+ */
+function spawnChild(cmd, args, cwd, cb) {
+    have(arguments, { cmd: 'str', args: 'str array', cwd: 'str', cb: 'func'});
+    var spawn = require('child_process').spawn;
+    var child = spawn(cmd, args, {cwd:cwd});
+
+   /*
+    child.stdout.on('data', function (data) {
+        grep.stdin.write(data);
+    });
+
+    child.stderr.on('data', function (data) {
+       etconsole.log('ps stderr: ' + data);
+    });
+    */
+
+    child.on('close', function (code) {
+        if (code !== 0)
+            return cb(new Error('exited with code: '+code));
+        else
+            cb();
     });
 }
 
@@ -38,11 +66,57 @@ function main() {
 function processModules(modules) {
     have(arguments, { modules: 'obj array' });
     var report = {};
+    report.errors = [];
+    report.warnings = [];
 
+    function iter(obj, cb) {
+        have(arguments, { obj: 'obj', cb: 'func' });
+
+        var module;
+        try {
+            module = require(obj.packageJson);
+        } catch (err) {
+            report.errors.push(obj.packageJson+': could not parse file');
+            console.error(obj.packageJson+': could not parse file');
+
+            return cb();
+        }
+
+        var testable = inspectModule(module, report);
+        var ver = module.version ? module.version : NO_VERSION;
+        var mreport = report[module.name][ver];
+        mreport.testsPassing = false;
+
+        if (testable) {
+            var cwd = path.dirname(module.packageJson);
+            spawnChild('npm', ['install'], cwd, function(err) {
+                if (err) return cb(err);
+                spawnChild('npm', ['test'], cwd, function(err) {
+                    if (err) return cb(err);
+                    mreport.testsPassing = true;
+                    cb();
+                });
+            });
+        } else {
+            cb();
+        }
+    }
+
+    async.mapLimit(modules, 5, iter, function(err) {
+        if (err) console.error(err.message);
+        renderReport(report);
+    });
+
+    /*
     _.forEach(modules, function(module) {
-        inspectModule(module.dir, module.packageJson, report);
+        var testable = inspectModule(module.packageJson, report);
+        if (testable) {
+            npmTest(path.basedir(module.packageJson), function(err) {
+            }
+        }
     });
     renderReport(report);
+    */
 }
 
 /**
@@ -51,8 +125,35 @@ function processModules(modules) {
  */
 function renderReport(report) {
     have(arguments, { report: 'obj' });
-    var util = require('util');
-    console.log(util.inspect(report, {depth:null, colors:true}));
+
+    //var util = require('util');
+    //console.log(util.inspect(report, {depth:null, colors:true}));
+    //var errors = report.errors;
+    delete report.errors;
+    //var warnings = report.warnings;
+    delete report.warnings;
+
+    _.forOwn(report, function(mData, mName) {
+        if (!mData)  return;
+        printf('\n%s - %s\n', mName, mData.description);
+        _.forOwn(mData, function(vData, mVer) {
+            if (!vData || !semver.valid(mVer)) return;
+
+            //console.log(vData);
+            var tests;
+            if (vData.tests_passing) {
+                tests = 'tests passing';
+            } else {
+                if (vData.scripts_test) {
+                    tests = 'tests failing';
+                } else {
+                    tests = 'no tests';
+                }
+            }
+
+            printf('%s %s\n', mVer, tests);
+        });
+    });
 }
 
 /**
@@ -100,54 +201,75 @@ function checkAttr(module, target, isError, reportForMod) {
 
     var key = target.replace('.', '_');
     reportForMod[key] = val;
-    //console.log(target, ':', val);
+}
+/**
+ * Check dependencies for wildcard versions.
+ */
+function checkDepVersions(module, property, mreport) {
+    have(arguments, {module: 'obj', property: 'str', mreport: 'obj'});
+    if (!module[property])  return;
+
+    _.forOwn(module[property], function(key, val) {
+        if (val === '' || val === '*')
+            mreport.errors.push(property+' for '+key+'\'s version is a wildcard');
+        else if (val.match(/^>(.)+/) !== null)
+            mreport.errors.push(property+' for '+key+'\'s version is '+val);
+        else if (val.match(/^<(.)+/) !== null)
+            mreport.warning.push(property+' for '+key+'\'s version is '+val);
+        else if (val.match(/^~(.)+/) !== null)
+            mreport.warning.push(property+' for '+key+'\'s version is '+val);
+    });
 }
 
 /**
  * Inspect each module, flagging any issues.
- * @param {String} dirName The directory path where the module is.
- * @param {String} packageJson The absolute path to package.json file.
+ * @param {obj} module The object of the package.json file.
  * @param {Object} report The object where results are stored.
+ * @return {Boolean} true, if the module can be tested, false otherwise
  */
-function inspectModule(dirName, packageJson, report) {
-    have(arguments, {dirName: 'str', packageJson: 'str', report: 'obj'});
+function inspectModule(module, report) {
+    have(arguments, {module: 'obj', report: 'obj'});
 
-    var module = require(packageJson);
-    if (!module) return;
-    if (!module.name)  return;
+    if (!module) return false;
+    if (!module.name)  return false;
 
     if (report[module.name] && report[module.name][module.version]) {
         report[module.name].refCount++;
         report[module.name][module.version].refCount++;
-        return;
+        // we've seen this module before, don't test
+        return false;
     }
 
     // handle case if no version
-
+    var ver = module.version ? module.version : NO_VERSION;
     if (!report[module.name]) report[module.name] = {};
 
-    var mreport = report[module.name][module.version] = {};
+    var mreport = report[module.name][ver] = {};
     mreport.errors = [];
     mreport.warnings = [];
 
-    //console.log('\nname:', module.name);
-    //console.log('dir:', dirName);
-
     var toDo = [
-        { attr: 'description', err: false },
-        { attr: 'version', err: true },
         { attr: 'scripts.test', err: true },
         { attr: 'engine.node', err: false },
         { attr: 'repository.url', err: false },
         { attr: 'bugs.url', err: false },
+        { attr: 'homepage', err: false },
+        { attr: 'license', err: false },
     ];
+
+    if (!report[module.name].description && module.description)
+        report[module.name].description = module.description;
 
     _.forEach(toDo, function(item) {
         checkAttr(module, item.attr, item.err, mreport);
     });
 
+    checkDepVersions(module, 'dependencies', mreport);
+    checkDepVersions(module, 'devDependencies', mreport);
+
     // additional checking
-    if (mreport.version && !semver.valid(mreport.version)) {
+    if (ver === NO_VERSION) mreport.version = NO_VERSION;
+    if (mreport.version !== NO_VERSION && !semver.valid(mreport.version)) {
         mreport.errors.push('package.json: version is not semver-compliant');
     }
 
@@ -156,7 +278,11 @@ function inspectModule(dirName, packageJson, report) {
         report[module.name].refCount++;
     else
         report[module.name].refCount = 1;
+
+    // return true if the module is testable
+    return mreport.scripts_test ? true : false;
 }
 
+// start the execution
 main();
 

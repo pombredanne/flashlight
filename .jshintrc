@@ -1,6 +1,6 @@
 {
     "browser"       : false,
-    "camelcase"     : true,
+    "camelcase"     : false,
     "curly"         : false,
     "devel"         : false,
     "eqeqeq"        : true,
@@ -40,7 +40,8 @@
         "it"        : true,
         "should"    : true,
         "console"   : true,
-        "logger"    : true,
+        "printf"    : true,
+        "sprintf"   : true,
         "describe"  : true
     }
 }
