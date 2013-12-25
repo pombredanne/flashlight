@@ -30,25 +30,24 @@ function main() {
 }
 
 /**
- * Perform an 'npm install & npm test' command in the appropriate directory. Calls a callback
- * when done.
+ * Perform a command in the appropriate directory. Calls a callback when done.
  * @param {String} cwd The working directory for the `npm test` command.
  * @param {Function} cb The callback, called when done. An error indicates the tests failed.
  */
 function spawnChild(cmd, args, cwd, cb) {
     have(arguments, { cmd: 'str', args: 'str array', cwd: 'str', cb: 'func'});
+
     var spawn = require('child_process').spawn;
     var child = spawn(cmd, args, {cwd:cwd});
 
-   /*
     child.stdout.on('data', function (data) {
-        grep.stdin.write(data);
+        //console.log(data.toString().white);
     });
 
     child.stderr.on('data', function (data) {
-       etconsole.log('ps stderr: ' + data);
+        //console.log(data.toString().red);
     });
-    */
+
 
     child.on('close', function (code) {
         if (code !== 0)
@@ -88,12 +87,23 @@ function processModules(modules) {
         mreport.testsPassing = false;
 
         if (testable) {
-            var cwd = path.dirname(module.packageJson);
+            //console.log('module:',module);
+            //console.log('module.packageJson:',module.packageJson);
+            var cwd = path.dirname(obj.packageJson);
+            //console.log('npm install at: '+cwd);
             spawnChild('npm', ['install'], cwd, function(err) {
-                if (err) return cb(err);
+                if (err) {
+                    //console.error('Skipping npm test due to errors on install.');
+                    return cb(err);
+                }
+                //console.log('npm install at: '+cwd);
                 spawnChild('npm', ['test'], cwd, function(err) {
-                    if (err) return cb(err);
+                    if (err) {
+                        //console.error('Tests failed:', err.message);
+                        return cb();
+                    }
                     mreport.testsPassing = true;
+                    //console.error('Tests passed:', mreport);
                     cb();
                 });
             });
@@ -102,7 +112,7 @@ function processModules(modules) {
         }
     }
 
-    async.mapLimit(modules, 5, iter, function(err) {
+    async.mapLimit(modules, 1, iter, function(err) {
         if (err) console.error(err.message);
         renderReport(report);
     });
@@ -141,7 +151,7 @@ function renderReport(report) {
 
             //console.log(vData);
             var tests;
-            if (vData.tests_passing) {
+            if (vData.testsPassing) {
                 tests = 'tests passing';
             } else {
                 if (vData.scripts_test) {
