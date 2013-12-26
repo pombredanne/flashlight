@@ -39,8 +39,9 @@
   "dependencies": {
       "async": "0.2.9",
       "colors": "0.6.2",
+      "debug": "0.7.4",
       "findit": "1.1.0",
-      "have": "stdarg/have",
+      "have": "0.2.3",
       "is2": "0.0.11",
       "lodash": "2.4.1",
       "npm-stats": "0.2.1",

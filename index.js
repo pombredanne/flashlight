@@ -6,8 +6,10 @@ var path = require('path');
 var semver = require('semver');
 var have = require('have');
 var _ = require('lodash');
-//var registry = require('npm-stats');
+var is = require('is2');
+var registry = require('npm-stats');
 var NO_VERSION = 'NO_VERSION';
+var debug = require('debug')('flashlight');
 
 /**
  * Where execution starts. Uses findit to locate all the package.json files.
@@ -41,13 +43,12 @@ function spawnChild(cmd, args, cwd, cb) {
     var child = spawn(cmd, args, {cwd:cwd});
 
     child.stdout.on('data', function (data) {
-        //console.log(data.toString().white);
+        debug('stdout: '+data.toString().white);
     });
 
     child.stderr.on('data', function (data) {
-        //console.log(data.toString().red);
+        debug('stderr: '+data.toString().red);
     });
-
 
     child.on('close', function (code) {
         if (code !== 0)
@@ -55,6 +56,73 @@ function spawnChild(cmd, args, cwd, cb) {
         else
             cb();
     });
+}
+
+/**
+ * Using the path to discovered package.json, parse the implied module
+ * dependendcy chain.
+ * @param {String} Qualified path to package.json
+ * @return {String} Describing the implied module dependency chain
+ */
+function depChainFromPath(pathToPkgJson) {
+    have(arguments, { pathToPkgJson: 'str' });
+    //pathToPkgJson = path.relative(pathToPkgJson, process.cwd());
+    pathToPkgJson = pathToPkgJson.replace(path.join(process.cwd(),'..'), '');
+    pathToPkgJson = pathToPkgJson.replace(/\/package\.json$/, '');
+    pathToPkgJson = pathToPkgJson.replace(/node_modules/g, '');
+    debug('node_modules:',pathToPkgJson);
+    pathToPkgJson = pathToPkgJson.split(path.sep);
+    pathToPkgJson = pathToPkgJson.filter(function(s) { return is.nonEmptyStr(s); });
+    pathToPkgJson = pathToPkgJson.join(' > ');
+    return pathToPkgJson;
+}
+
+function testModule(report, obj, cb) {
+    have(arguments, { report: 'obj', obj: 'obj', cb: 'func' });
+
+    var module;
+    try {
+        module = require(obj.packageJson);
+    } catch (err) {
+        report.errors.push(obj.packageJson+': could not parse file');
+        debug(obj.packageJson+': could not parse file');
+
+        return cb();
+    }
+
+    var testable = inspectModule(module, report);
+    var ver = module.version ? module.version : NO_VERSION;
+    var mreport = report[module.name][ver];
+    mreport.testsPassing = false;
+    mreport.depChain = depChainFromPath(obj.packageJson);
+    debug('depChain: '+mreport.depChain);
+
+    if (testable) {
+        debug('module:',module.name);
+        //debug('module.packageJson:',module.packageJson);
+        var cwd = path.dirname(obj.packageJson);
+        debug('npm install at: '+cwd);
+        spawnChild('npm', ['install'], cwd, function(err) {
+            if (err) {
+                debug('Skipping npm test due to errors on install.');
+                return cb(err);
+            }
+            debug('2 npm test at: '+cwd);
+            spawnChild('npm', ['test'], cwd, function(err) {
+                debug('3 npm test at: '+cwd);
+                if (err) {
+                    debug('Tests failed:', err.message);
+                    return cb();
+                }
+                debug('4 npm test at: '+cwd);
+                mreport.testsPassing = true;
+                debug('Tests passed:', mreport);
+                cb();
+            });
+        });
+    } else {
+        cb();
+    }
 }
 
 /**
@@ -68,65 +136,10 @@ function processModules(modules) {
     report.errors = [];
     report.warnings = [];
 
-    function iter(obj, cb) {
-        have(arguments, { obj: 'obj', cb: 'func' });
-
-        var module;
-        try {
-            module = require(obj.packageJson);
-        } catch (err) {
-            report.errors.push(obj.packageJson+': could not parse file');
-            console.error(obj.packageJson+': could not parse file');
-
-            return cb();
-        }
-
-        var testable = inspectModule(module, report);
-        var ver = module.version ? module.version : NO_VERSION;
-        var mreport = report[module.name][ver];
-        mreport.testsPassing = false;
-
-        if (testable) {
-            //console.log('module:',module);
-            //console.log('module.packageJson:',module.packageJson);
-            var cwd = path.dirname(obj.packageJson);
-            //console.log('npm install at: '+cwd);
-            spawnChild('npm', ['install'], cwd, function(err) {
-                if (err) {
-                    //console.error('Skipping npm test due to errors on install.');
-                    return cb(err);
-                }
-                //console.log('npm install at: '+cwd);
-                spawnChild('npm', ['test'], cwd, function(err) {
-                    if (err) {
-                        //console.error('Tests failed:', err.message);
-                        return cb();
-                    }
-                    mreport.testsPassing = true;
-                    //console.error('Tests passed:', mreport);
-                    cb();
-                });
-            });
-        } else {
-            cb();
-        }
-    }
-
-    async.mapLimit(modules, 1, iter, function(err) {
-        if (err) console.error(err.message);
+    async.mapLimit(modules, 1, async.apply(testModule, report), function(err) {
+        if (err) debug(err.message);
         renderReport(report);
     });
-
-    /*
-    _.forEach(modules, function(module) {
-        var testable = inspectModule(module.packageJson, report);
-        if (testable) {
-            npmTest(path.basedir(module.packageJson), function(err) {
-            }
-        }
-    });
-    renderReport(report);
-    */
 }
 
 /**
@@ -136,8 +149,6 @@ function processModules(modules) {
 function renderReport(report) {
     have(arguments, { report: 'obj' });
 
-    //var util = require('util');
-    //console.log(util.inspect(report, {depth:null, colors:true}));
     //var errors = report.errors;
     delete report.errors;
     //var warnings = report.warnings;
@@ -149,12 +160,12 @@ function renderReport(report) {
         _.forOwn(mData, function(vData, mVer) {
             if (!vData || !semver.valid(mVer)) return;
 
-            //console.log(vData);
             var tests;
             if (vData.testsPassing) {
                 tests = 'tests passing';
             } else {
-                if (vData.scripts_test) {
+                if (vData.scripts_test &&vData.scripts_test !== 'echo "Error: '+
+                    'no test specified" && exit 1') {
                     tests = 'tests failing';
                 } else {
                     tests = 'no tests';
