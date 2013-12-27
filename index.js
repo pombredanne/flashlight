@@ -11,7 +11,8 @@ var is = require('is2');
 var NO_VERSION = 'NO_VERSION';
 var debug = require('debug')('flashlight');
 var packageDeps = require('package-deps');
-//var util = require('util');
+var util = require('util');
+var assert = require('assert');
 
 /**
  * Where execution starts. Uses findit to locate all the package.json files.
@@ -33,11 +34,23 @@ function main() {
         processModules(modules);
     });
     */
+    var report = {};
+    report.errors = [];
+    report.warnings = [];
+
+    var testArray = [];
+
     var deps = packageDeps.findAll('./');
     var util = require('util');
     //console.log(util.inspect(deps, {colors:true,depth:null}));
     debug('deps.dependcies: '+util.inspect(deps.dependcies));
-    processModules(deps);
+    createTestArray(deps, testArray, report);
+    debug(util.inspect(testArray,{colors:true,depth:null}));
+
+    async.mapLimit(testArray, 1, async.apply(testModule, report), function(err) {
+        if (err) debug(err.message);
+        renderReport(report);
+    });
 }
 
 /**
@@ -51,7 +64,6 @@ function spawnChild(cmd, args, cwd, cb) {
     var spawn = require('child_process').spawn;
     var child = spawn(cmd, args, {cwd:cwd});
 
-    /*
     child.stdout.on('data', function (data) {
         debug('stdout: '+data.toString().white);
     });
@@ -59,7 +71,6 @@ function spawnChild(cmd, args, cwd, cb) {
     child.stderr.on('data', function (data) {
         debug('stderr: '+data.toString().red);
     });
-    */
 
     child.on('close', function (code) {
         if (code !== 0)
@@ -142,35 +153,21 @@ function testModule(report, obj, cb) {
  * be done in parallel.
  * @param {Object[]} modules An array of module objects.
  */
-function processModules(modules) {
-    have(arguments, { modules: 'obj' });
-    var report = {};
-    report.errors = [];
-    report.warnings = [];
+function createTestArray(moduleTree, testArray, report) {
+    have(arguments, { moduleTree: 'obj', report: 'obj' });
+    assert.ok(is.array(testArray));
 
-    /*
-    async.mapLimit(modules, 1, async.apply(testModule, report), function(err) {
-        if (err) debug(err.message);
-        renderReport(report);
-    });
-    */
-    debug('modules.dependencies: '+modules.dependencies);
-    // we start with a packageJson at root
-    // we test root
-    // then, for each entry in dependencies,test
-    //      - etc
+    if (!moduleTree.packageJson)  return;
+    testArray.push({ packageJson: moduleTree.packageJson, modTreeLoc: moduleTree });
 
-    if (!modules.packageJson)  return;
-    testModule(report, modules, function() {});
-
-
-    _.forOwn(modules.dependencies, function findPkgJsons(modVer, modName) {
-        console.log(modVer+':'+modName);
-        if (!modules[modName] || !modules[modName].packageJson)
+    for (var modName in moduleTree.dependencies) {
+        if (!moduleTree[modName] || !moduleTree[modName].packageJson)
             return;
-        processModules(modules[modName]);
-    });
-    renderReport(report);
+        report[modName] = {};
+        report[modName].errors = [];
+        report[modName].warnings = [];
+        createTestArray(moduleTree[modName], testArray, report[modName]);
+    }
 }
 
 /**
@@ -180,9 +177,8 @@ function processModules(modules) {
 function renderReport(report) {
     have(arguments, { report: 'obj' });
 
-    //var errors = report.errors;
+    // FIXME: Check if still need errors and warnings here
     delete report.errors;
-    //var warnings = report.warnings;
     delete report.warnings;
 
     _.forOwn(report, function(mData, mName) {
