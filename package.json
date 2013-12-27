@@ -46,6 +46,7 @@
       "lodash": "2.4.1",
       "npm-stats": "0.2.1",
       "optimist": "0.6.0",
+      "package-deps": "0.0.5",
       "semver": "2.2.1",
       "semver-utils": "1.1.0",
       "sprintf.js": "0.1.3"

@@ -7,9 +7,11 @@ var semver = require('semver');
 var have = require('have');
 var _ = require('lodash');
 var is = require('is2');
-var registry = require('npm-stats');
+//var registry = require('npm-stats');
 var NO_VERSION = 'NO_VERSION';
 var debug = require('debug')('flashlight');
+var packageDeps = require('package-deps');
+//var util = require('util');
 
 /**
  * Where execution starts. Uses findit to locate all the package.json files.
@@ -17,6 +19,7 @@ var debug = require('debug')('flashlight');
  * when findit finishes, then each module is processed.
  */
 function main() {
+    /*
     var finder = require('findit')(process.argv[2] || '.');
     var modules = [];
 
@@ -29,6 +32,12 @@ function main() {
     finder.on('end', function () {
         processModules(modules);
     });
+    */
+    var deps = packageDeps.findAll('./');
+    var util = require('util');
+    //console.log(util.inspect(deps, {colors:true,depth:null}));
+    debug('deps.dependcies: '+util.inspect(deps.dependcies));
+    processModules(deps);
 }
 
 /**
@@ -42,6 +51,7 @@ function spawnChild(cmd, args, cwd, cb) {
     var spawn = require('child_process').spawn;
     var child = spawn(cmd, args, {cwd:cwd});
 
+    /*
     child.stdout.on('data', function (data) {
         debug('stdout: '+data.toString().white);
     });
@@ -49,6 +59,7 @@ function spawnChild(cmd, args, cwd, cb) {
     child.stderr.on('data', function (data) {
         debug('stderr: '+data.toString().red);
     });
+    */
 
     child.on('close', function (code) {
         if (code !== 0)
@@ -78,6 +89,7 @@ function depChainFromPath(pathToPkgJson) {
 }
 
 function testModule(report, obj, cb) {
+    console.log('obj: ',obj);
     have(arguments, { report: 'obj', obj: 'obj', cb: 'func' });
 
     var module;
@@ -131,15 +143,34 @@ function testModule(report, obj, cb) {
  * @param {Object[]} modules An array of module objects.
  */
 function processModules(modules) {
-    have(arguments, { modules: 'obj array' });
+    have(arguments, { modules: 'obj' });
     var report = {};
     report.errors = [];
     report.warnings = [];
 
+    /*
     async.mapLimit(modules, 1, async.apply(testModule, report), function(err) {
         if (err) debug(err.message);
         renderReport(report);
     });
+    */
+    debug('modules.dependencies: '+modules.dependencies);
+    // we start with a packageJson at root
+    // we test root
+    // then, for each entry in dependencies,test
+    //      - etc
+
+    if (!modules.packageJson)  return;
+    testModule(report, modules, function() {});
+
+
+    _.forOwn(modules.dependencies, function findPkgJsons(modVer, modName) {
+        console.log(modVer+':'+modName);
+        if (!modules[modName] || !modules[modName].packageJson)
+            return;
+        processModules(modules[modName]);
+    });
+    renderReport(report);
 }
 
 /**
