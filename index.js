@@ -7,12 +7,12 @@ var semver = require('semver');
 var have = require('have');
 var _ = require('lodash');
 var is = require('is2');
-//var registry = require('npm-stats');
 var NO_VERSION = 'NO_VERSION';
 var debug = require('debug')('flashlight');
 var packageDeps = require('package-deps');
-var util = require('util');
+//var util = require('util');
 var assert = require('assert');
+var npm = require('npm');
 
 /**
  * Where execution starts. Uses findit to locate all the package.json files.
@@ -20,36 +20,74 @@ var assert = require('assert');
  * when findit finishes, then each module is processed.
  */
 function main() {
-    /*
-    var finder = require('findit')(process.argv[2] || '.');
-    var modules = [];
-
-    finder.on('file', function (file) {
-        if (path.basename(file) === 'package.json') {
-            modules.push({ packageJson: path.resolve(file) });
-        }
-    });
-
-    finder.on('end', function () {
-        processModules(modules);
-    });
-    */
     var report = {};
-    report.errors = [];
-    report.warnings = [];
-
     var testArray = [];
 
+    console.log('Finding the dependencies.');
     var deps = packageDeps.findAll('./');
-    var util = require('util');
-    //console.log(util.inspect(deps, {colors:true,depth:null}));
-    debug('deps.dependcies: '+util.inspect(deps.dependcies));
-    createTestArray(deps, testArray, report);
-    debug(util.inspect(testArray,{colors:true,depth:null}));
+    console.log('Dependencies found. Creating list of modules to inspect and test.');
+    createTestArray(deps, testArray);
+    var parallel = 5;
 
-    async.mapLimit(testArray, 1, async.apply(testModule, report), function(err) {
+    if (testArray.length < 1) {
+        console.log('Did not find any modules to test, exiting.');
+        process.exit(0);
+    }
+    console.log('Found %s modules to inspect and test.', testArray.length);
+
+    console.log('Doing "npm install" and "npm test" for each module. ');
+    if (testArray.length > parallel && testArray.length > 2 && parallel > 1) {
+        console.log('Processing %s, doing %s modules in parallel.',
+                    testArray.length, parallel);
+    }
+
+    async.series([
+        // get latest version for each module
+        async.apply(getLatestVersions, testArray, parallel),
+        // run the tests for each module
+        async.apply(runTests, testArray, parallel, report)
+    ],
+    // after series is done, this callback runs
+    function(err) {
         if (err) debug(err.message);
         renderReport(report);
+    });
+
+}
+
+function getLatestVersions(testArray, parallel, cb) {
+    function getVersion(obj, cb) {
+        if (!obj || !obj.name)  return cb();
+        npm.load({ loglevel: 'silent' }, function (err) {
+            if (err) return cb(err);
+            var silent = true;      // make npm not chatty on stdout
+            npm.commands.view([obj.name], silent, function (err, data) {
+                if (err) { return cb(err); }
+                for (var key in data) {
+                    if (!data.hasOwnProperty(key)) continue;
+                    if (data[key] && data[key].versions && data[key].versions.length) {
+                        var len = data[key].versions.length;
+                        obj.latest = data[key].versions[len-1];
+                        return cb();
+                    }
+                }
+                debug('getLatestVersions: No version found');
+                obj.latest = '?.?.?';
+                return cb();
+            });
+        });
+    }
+
+    async.mapLimit(testArray, parallel, getVersion, function(err) {
+        if (err) debug(err.message);
+        cb();
+    });
+}
+
+function runTests(testArray, parallel, report, cb) {
+    async.mapLimit(testArray, parallel, async.apply(testModule, report), function(err) {
+        if (err) debug(err.message);
+        cb();
     });
 }
 
@@ -65,11 +103,11 @@ function spawnChild(cmd, args, cwd, cb) {
     var child = spawn(cmd, args, {cwd:cwd});
 
     child.stdout.on('data', function (data) {
-        debug('stdout: '+data.toString().white);
+        //debug('stdout: '+data.toString().white);
     });
 
     child.stderr.on('data', function (data) {
-        debug('stderr: '+data.toString().red);
+        //debug('stderr: '+data.toString().red);
     });
 
     child.on('close', function (code) {
@@ -92,7 +130,6 @@ function depChainFromPath(pathToPkgJson) {
     pathToPkgJson = pathToPkgJson.replace(path.join(process.cwd(),'..'), '');
     pathToPkgJson = pathToPkgJson.replace(/\/package\.json$/, '');
     pathToPkgJson = pathToPkgJson.replace(/node_modules/g, '');
-    debug('node_modules:',pathToPkgJson);
     pathToPkgJson = pathToPkgJson.split(path.sep);
     pathToPkgJson = pathToPkgJson.filter(function(s) { return is.nonEmptyStr(s); });
     pathToPkgJson = pathToPkgJson.join(' > ');
@@ -100,7 +137,6 @@ function depChainFromPath(pathToPkgJson) {
 }
 
 function testModule(report, obj, cb) {
-    console.log('obj: ',obj);
     have(arguments, { report: 'obj', obj: 'obj', cb: 'func' });
 
     var module;
@@ -108,8 +144,6 @@ function testModule(report, obj, cb) {
         module = require(obj.packageJson);
     } catch (err) {
         report.errors.push(obj.packageJson+': could not parse file');
-        debug(obj.packageJson+': could not parse file');
-
         return cb();
     }
 
@@ -117,29 +151,18 @@ function testModule(report, obj, cb) {
     var ver = module.version ? module.version : NO_VERSION;
     var mreport = report[module.name][ver];
     mreport.testsPassing = false;
-    mreport.depChain = depChainFromPath(obj.packageJson);
-    debug('depChain: '+mreport.depChain);
+    mreport.depChain = [];
+    mreport.depChain.push(depChainFromPath(obj.packageJson));
 
     if (testable) {
-        debug('module:',module.name);
+        debug('testing '+module.name+' ('+ver+')');
         //debug('module.packageJson:',module.packageJson);
         var cwd = path.dirname(obj.packageJson);
-        debug('npm install at: '+cwd);
         spawnChild('npm', ['install'], cwd, function(err) {
-            if (err) {
-                debug('Skipping npm test due to errors on install.');
-                return cb(err);
-            }
-            debug('2 npm test at: '+cwd);
+            if (err) { return cb(err); }
             spawnChild('npm', ['test'], cwd, function(err) {
-                debug('3 npm test at: '+cwd);
-                if (err) {
-                    debug('Tests failed:', err.message);
-                    return cb();
-                }
-                debug('4 npm test at: '+cwd);
+                if (err) { return cb(); }
                 mreport.testsPassing = true;
-                debug('Tests passed:', mreport);
                 cb();
             });
         });
@@ -153,20 +176,24 @@ function testModule(report, obj, cb) {
  * be done in parallel.
  * @param {Object[]} modules An array of module objects.
  */
-function createTestArray(moduleTree, testArray, report) {
+function createTestArray(moduleTree, testArray) {
     have(arguments, { moduleTree: 'obj', report: 'obj' });
     assert.ok(is.array(testArray));
 
     if (!moduleTree.packageJson)  return;
-    testArray.push({ packageJson: moduleTree.packageJson, modTreeLoc: moduleTree });
+
+    testArray.push({
+        packageJson: moduleTree.packageJson,
+        ver: moduleTree.ver,
+        name: moduleTree.name
+    });
 
     for (var modName in moduleTree.dependencies) {
-        if (!moduleTree[modName] || !moduleTree[modName].packageJson)
-            return;
-        report[modName] = {};
-        report[modName].errors = [];
-        report[modName].warnings = [];
-        createTestArray(moduleTree[modName], testArray, report[modName]);
+        if (!moduleTree[modName] || !moduleTree[modName].packageJson) return;
+        var ver = moduleTree.dependencies[modName];
+        moduleTree[modName].ver = ver;
+        moduleTree[modName].name = modName;
+        createTestArray(moduleTree[modName], testArray);
     }
 }
 
@@ -180,12 +207,24 @@ function renderReport(report) {
     // FIXME: Check if still need errors and warnings here
     delete report.errors;
     delete report.warnings;
+    writeToFile('./report.js', report);
 
-    _.forOwn(report, function(mData, mName) {
+    //_.forOwn(report, function(mData, mName) {
+    for (var mName in report) {
+        if (!report.hasOwnProperty(mName)) continue;
+        var mData = report[mName];
         if (!mData)  return;
-        printf('\n%s - %s\n', mName, mData.description);
-        _.forOwn(mData, function(vData, mVer) {
-            if (!vData || !semver.valid(mVer)) return;
+        if (mName === 'errors' || mName === 'warnings')  continue;
+        var mReport = [];
+
+        mReport.push(sprintf('\n%s - %s\n', mName, mData.description));
+
+        //_.forOwn(mData, function(vData, mVer) {
+        for (var mVer in mData) {
+            if (!mData.hasOwnProperty(mVer)) continue;
+            var vData = mData[mVer];
+            if (!vData) continue;
+            debug('vData:',vData);
 
             var tests;
             if (vData.testsPassing) {
@@ -197,11 +236,10 @@ function renderReport(report) {
                 } else {
                     tests = 'no tests';
                 }
+                mReport.push(sprintf('%s %s\n', mVer, tests));
             }
-
-            printf('%s %s\n', mVer, tests);
-        });
-    });
+        }
+    }
 }
 
 /**
@@ -318,7 +356,7 @@ function inspectModule(module, report) {
     // additional checking
     if (ver === NO_VERSION) mreport.version = NO_VERSION;
     if (mreport.version !== NO_VERSION && !semver.valid(mreport.version)) {
-        mreport.errors.push('package.json: version is not semver-compliant');
+        mreport.errors.push('package.json: version is not semver-compliant: '+mreport.version);
     }
 
     mreport.refCount = 1;
@@ -329,6 +367,12 @@ function inspectModule(module, report) {
 
     // return true if the module is testable
     return mreport.scripts_test ? true : false;
+}
+
+function writeToFile(fileName, data) {
+    var fs = require('fs');
+    var inspect = require('util').inspect;
+    fs.writeFileSync(fileName, inspect(data,{depth:null}));
 }
 
 // start the execution
