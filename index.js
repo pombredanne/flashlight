@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 'use strict';
 require('colors');
 require('sprintf.js');
@@ -13,39 +14,54 @@ var packageDeps = require('package-deps');
 //var util = require('util');
 var assert = require('assert');
 var npm = require('npm');
+var argv = require('optimist').argv;
+var fs = require('fs');
+
+
+// globals for functionality
+var g = {
+    parallel: 5,
+    verbose: false,
+    warnings: false,
+    path: process.cwd()
+};
 
 /**
  * Where execution starts. Uses package-deps to locate all the package.json
  * files. We gather all the modules in testArray.
  */
 function main() {
+
+    cmdLineArgs();
     var report = {};
     var testArray = [];
 
-    console.log('Finding the dependencies.');
+    if (g.verbose)
+        console.log('Finding the dependencies.');
     var deps = packageDeps.findAll('./');
-    console.log('Dependencies found. Creating list of modules to inspect and test.');
+    if (g.verbose)
+        console.log('Dependencies found. Creating list of modules to inspect and test.');
     createTestArray(deps, testArray);
-    var parallel = 5;
 
     if (testArray.length < 1) {
-        console.log('Did not find any modules to test, exiting.');
+        console.error('Did not find any modules to test, exiting.');
         process.exit(0);
     }
-    console.log('Found %s modules to inspect and test.', testArray.length);
 
+    console.log('Found %s modules to inspect and test.', testArray.length);
     console.log('Doing "npm install" and "npm test" for each module. ');
-    if (testArray.length > parallel && testArray.length > 2 && parallel > 1) {
+
+    if (g.verbose && testArray.length > g.parallel && testArray.length > 2 && g.parallel > 1) {
         console.log('Processing %s, doing %s modules in parallel.',
-                    testArray.length, parallel);
+                    testArray.length, g.parallel);
     }
 
     // do 2 things in order:
     // 1- latest version for each module
     // 2- run the tests for each module
     async.series([
-        async.apply(getLatestVersions, testArray, parallel),
-        async.apply(runTests, testArray, parallel, report)
+        async.apply(getLatestVersions, testArray, g.parallel),
+        async.apply(runTests, testArray, g.parallel, report)
     ],
     // after series is done, this callback runs
     function(err) {
@@ -54,7 +70,43 @@ function main() {
     });
 }
 
+/**
+ * Handle the command line arguments, by setting the correct globals.
+ */
+function cmdLineArgs() {
+    if (argv.p) {
+        g.parallel = argv.p;
+        debug('Setting parallel to: '+g.parallel);
+    }
+    if (argv.v) {
+        g.verbose = true;
+        debug('Setting verbose to: '+g.verbose);
+    }
+    if (argv.w) {
+        g.warnings = true;
+        debug('Now displaying warnings.');
+    }
+    if (is.nonEmptyStr(argv.path)) {
+        var path = path.resolve(argv.path);
+        if (fs.existsSync(path)) {
+            process.chdir(path);
+            debug('Setting current working directory to: '+path);
+        } else {
+            debug('Failed to set current working directory to: '+path+
+                 ', the path does not exist.');
+        }
+    }
+}
+
 function getLatestVersions(testArray, parallel, cb) {
+
+    /*
+    var cl = process.stdout.write;
+    if (!g.verbose) process.stdout.write = function(a,b,c,d,e,f) {
+        cl('=====>BOOM:',a,b,c,d,e,f);
+    };
+    */
+
     function getVersion(obj, cb) {
         if (!obj || !obj.name)  return cb();
         npm.load({ loglevel: 'silent' }, function (err) {
@@ -67,6 +119,8 @@ function getLatestVersions(testArray, parallel, cb) {
                     if (data[key] && data[key].versions && data[key].versions.length) {
                         var len = data[key].versions.length;
                         obj.latest = data[key].versions[len-1];
+                        if (g.verbose)
+                            console.log('Latest version for '+obj.name+': '+obj.latest);
                         return cb();
                     }
                 }
@@ -77,13 +131,16 @@ function getLatestVersions(testArray, parallel, cb) {
         });
     }
 
+    console.log('Getting latest version information from npmjs.org.');
     async.mapLimit(testArray, parallel, getVersion, function(err) {
         if (err) debug(err.message);
+        //if (!g.verbose) process.stdout.write = cl;
         cb();
     });
 }
 
 function runTests(testArray, parallel, report, cb) {
+    console.log('Running "npm install" and "npm test" for each module.');
     async.mapLimit(testArray, parallel, async.apply(testModule, report), function(err) {
         if (err) debug(err.message);
         cb();
@@ -101,6 +158,7 @@ function spawnChild(cmd, args, cwd, cb) {
     var spawn = require('child_process').spawn;
     var child = spawn(cmd, args, {cwd:cwd});
 
+    // we need these handlers - some tests use stdout & stderr
     child.stdout.on('data', function (data) {
         //debug('stdout: '+data.toString().white);
     });
@@ -110,10 +168,13 @@ function spawnChild(cmd, args, cwd, cb) {
     });
 
     child.on('close', function (code) {
-        if (code !== 0)
+        if (code !== 0) {
+            if (g.verbose)
+                console.error('"'+cmd+' '+args.join(' ')+'" exited with error code: '+code);
             return cb(new Error('exited with code: '+code));
-        else
+        } else {
             cb();
+        }
     });
 }
 
@@ -125,7 +186,6 @@ function spawnChild(cmd, args, cwd, cb) {
  */
 function depChainFromPath(pathToPkgJson) {
     have(arguments, { pathToPkgJson: 'str' });
-    //pathToPkgJson = path.relative(pathToPkgJson, process.cwd());
     pathToPkgJson = pathToPkgJson.replace(path.join(process.cwd(),'..'), '');
     pathToPkgJson = pathToPkgJson.replace(/\/package\.json$/, '');
     pathToPkgJson = pathToPkgJson.replace(/node_modules/g, '');
@@ -150,16 +210,19 @@ function testModule(report, obj, cb) {
     var ver = module.version ? module.version : NO_VERSION;
     var mreport = report[module.name][ver];
     mreport.testsPassing = false;
-    mreport.depChain = [];
+    if (!mreport.depChain)  mreport.depChain = [];
     mreport.depChain.push(depChainFromPath(obj.packageJson));
 
     if (testable) {
         debug('testing '+module.name+' ('+ver+')');
-        //debug('module.packageJson:',module.packageJson);
+        if (g.verbose)
+            console.log('Starting "npm install '+module.name+'"');
         var cwd = path.dirname(obj.packageJson);
         spawnChild('npm', ['install'], cwd, function(err) {
             if (err) { return cb(err); }
             debug('completed "npm install '+module.name+'"');
+            if (g.verbose)
+                console.log('Starting "npm test '+module.name+'"');
             spawnChild('npm', ['test'], cwd, function(err) {
                 if (err) { return cb(); }
                 debug('completed "npm test '+module.name+'"');
@@ -218,8 +281,9 @@ function renderReport(report) {
         if (mName === 'errors' || mName === 'warnings')  continue;
         var mReport = [];
         var doReport = false;
+        var i;
 
-        mReport.push(sprintf('\n%s - %s\n', mName, mData.description));
+        var title = sprintf('\n%s - %s\n', mName, mData.description);
 
         for (var mVer in mData) {
             if (!mData.hasOwnProperty(mVer)) continue;
@@ -228,22 +292,40 @@ function renderReport(report) {
             var vData = mData[mVer];
             if (!vData) continue;
 
+            mReport.push(sprintf('Report for version %s:\n', mVer));
+
+
+            for (i=0; i<vData.depChain.length; i++) {
+                mReport.push('    '+vData.depChain[i]+' ('+mVer+')\n');
+            }
+
+            for (i=0; i<vData.errors.length; i++) {
+                mReport.push('    error: '+vData.errors[i]+' ('+mVer+')\n');
+                doReport = true;
+            }
+
+            for (i=0; g.warnings && i<vData.errors.length; i++) {
+                mReport.push('    warning: '+vData.warnings[i]+'\n');
+                doReport = true;
+            }
+
             var tests;
             if (vData.testsPassing) {
                 tests = 'tests passing';
             } else {
                 if (vData.scripts_test &&vData.scripts_test !== 'echo "Error: '+
                     'no test specified" && exit 1') {
-                    tests = 'tests failing';
+                    tests = 'tests failing on version: '+mVer;
                 } else {
-                    tests = 'no tests';
+                    tests = 'no tests for version: '+mVer;
                 }
                 doReport = true;
-                mReport.push(sprintf('    %s %s\n', mVer, tests));
+                mReport.push(sprintf('    %s\n', tests));
             }
         }
-        if (mReport.length > 1) {
-            for (var i=0; i<mReport.length; i++) {
+        if (doReport && mReport.length > 1) {
+            mReport.unshift(title);
+            for (i=0; i<mReport.length; i++) {
                 process.stdout.write(mReport[i]);
             }
         }
@@ -390,5 +472,5 @@ function writeToFile(fileName, data) {
 }
 
 // start the execution
-main();
+main(argv);
 
