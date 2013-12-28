@@ -15,9 +15,8 @@ var assert = require('assert');
 var npm = require('npm');
 
 /**
- * Where execution starts. Uses findit to locate all the package.json files.
- * We gather all the modules in the 'modules' array.  The 'end' event fires
- * when findit finishes, then each module is processed.
+ * Where execution starts. Uses package-deps to locate all the package.json
+ * files. We gather all the modules in testArray.
  */
 function main() {
     var report = {};
@@ -41,10 +40,11 @@ function main() {
                     testArray.length, parallel);
     }
 
+    // do 2 things in order:
+    // 1- latest version for each module
+    // 2- run the tests for each module
     async.series([
-        // get latest version for each module
         async.apply(getLatestVersions, testArray, parallel),
-        // run the tests for each module
         async.apply(runTests, testArray, parallel, report)
     ],
     // after series is done, this callback runs
@@ -52,7 +52,6 @@ function main() {
         if (err) debug(err.message);
         renderReport(report);
     });
-
 }
 
 function getLatestVersions(testArray, parallel, cb) {
@@ -160,8 +159,10 @@ function testModule(report, obj, cb) {
         var cwd = path.dirname(obj.packageJson);
         spawnChild('npm', ['install'], cwd, function(err) {
             if (err) { return cb(err); }
+            debug('completed "npm install '+module.name+'"');
             spawnChild('npm', ['test'], cwd, function(err) {
                 if (err) { return cb(); }
+                debug('completed "npm test '+module.name+'"');
                 mreport.testsPassing = true;
                 cb();
             });
@@ -209,22 +210,23 @@ function renderReport(report) {
     delete report.warnings;
     writeToFile('./report.js', report);
 
-    //_.forOwn(report, function(mData, mName) {
+
     for (var mName in report) {
         if (!report.hasOwnProperty(mName)) continue;
         var mData = report[mName];
         if (!mData)  return;
         if (mName === 'errors' || mName === 'warnings')  continue;
         var mReport = [];
+        var doReport = false;
 
         mReport.push(sprintf('\n%s - %s\n', mName, mData.description));
 
-        //_.forOwn(mData, function(vData, mVer) {
         for (var mVer in mData) {
             if (!mData.hasOwnProperty(mVer)) continue;
+            if (!semver.valid(mVer)) continue;
+
             var vData = mData[mVer];
             if (!vData) continue;
-            debug('vData:',vData);
 
             var tests;
             if (vData.testsPassing) {
@@ -236,7 +238,13 @@ function renderReport(report) {
                 } else {
                     tests = 'no tests';
                 }
-                mReport.push(sprintf('%s %s\n', mVer, tests));
+                doReport = true;
+                mReport.push(sprintf('    %s %s\n', mVer, tests));
+            }
+        }
+        if (mReport.length > 1) {
+            for (var i=0; i<mReport.length; i++) {
+                process.stdout.write(mReport[i]);
             }
         }
     }
@@ -334,9 +342,12 @@ function inspectModule(module, report) {
     mreport.errors = [];
     mreport.warnings = [];
 
+    // Any attribute you are interested in, place here
+    // it will be put in module by checkDepVersions
     var toDo = [
         { attr: 'scripts.test', err: true },
         { attr: 'engine.node', err: false },
+        { attr: 'version', err: true },
         { attr: 'repository.url', err: false },
         { attr: 'bugs.url', err: false },
         { attr: 'homepage', err: false },
@@ -353,6 +364,9 @@ function inspectModule(module, report) {
     checkDepVersions(module, 'dependencies', mreport);
     checkDepVersions(module, 'devDependencies', mreport);
 
+    var util = require('util');
+    debug('-=-=-=-> mreport:'+util.inspect(mreport,{colors:true,depth:null}));
+    debug('>>>>>>>> module:'+util.inspect(mreport,{colors:true,depth:null}));
     // additional checking
     if (ver === NO_VERSION) mreport.version = NO_VERSION;
     if (mreport.version !== NO_VERSION && !semver.valid(mreport.version)) {
