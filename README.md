@@ -1,7 +1,7 @@
 flashlight
 ==========
 
-A command-line tool to inspect your Node.js project dependencies for potential problems.
+A command-line tool to inspect your Node.js project dependencies for problems.
 
 ## Installation
 
