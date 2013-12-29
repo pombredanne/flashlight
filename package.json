@@ -1,10 +1,10 @@
 {
   "name": "flashlight",
   "version": "0.0.0",
-  "description": "Command-line tool to inspect your Node.js dependencies for potential problems. ",
+  "description": "Command-line tool to inspect your Node.js project dependencies for problems. ",
   "main": "index.js",
   "scripts": {
-    "test": "./node_modules/.bin/mocha --reporter list"
+    "test": "./node_modules/.bin/mocha --reporter list test.js"
   },
   "bin": {
     "flashlight": "./index.js"
