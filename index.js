@@ -228,12 +228,9 @@ function testModule(report, obj, cb) {
     mreport.testsPassing = false;
     if (!mreport.depChain)  mreport.depChain = [];
     mreport.depChain.push(depChainFromPath(obj.packageJson));
-    console.log('tm - 1');
     if (!mreport.latest && obj.latest) {
-        console.log('tm - 2',obj.latest,'  - ', ver);
         mreport.latest = obj.latest;
         if (semver.gt(mreport.latest, ver)) {
-            console.log('tm - 3');
             mreport.warnings.push('version '+ver+' is outdated, latest version: '+mreport.latest);
         }
     }
