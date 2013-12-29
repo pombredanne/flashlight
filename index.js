@@ -21,7 +21,10 @@ var g = {
     parallel: 5,
     verbose: false,
     warnings: false,
-    path: process.cwd()
+    path: process.cwd(),
+    testOutput: false,
+    showLicense: false,
+    showAll: false
 };
 
 /**
@@ -31,6 +34,7 @@ var g = {
  * @param {Object} argv The command line arguments from Optimist.
  */
 function main(argv) {
+    have(arguments, { argv: 'obj' });
 
     cmdLineArgs(argv);
     var report = {};
@@ -75,9 +79,27 @@ function main(argv) {
  * @param {Object} The command-line arguments from optimist.
  */
 function cmdLineArgs(argv) {
+    have(arguments, { argv: 'obj' });
+
+    if (argv.help) {
+        showHelp();
+        process.exit(0);
+    }
+    if (argv.a) {
+        g.showAll = argv.a;
+        debug('Setting showAll to: '+g.showAll);
+    }
+    if (argv.l) {
+        g.showLicense = argv.l;
+        debug('Setting showLicense to: '+g.showLicense);
+    }
     if (argv.p) {
-        g.parallel = argv.p;
-        debug('Setting parallel to: '+g.parallel);
+        if (is.positiveInt(argv.p)) {
+            g.parallel = argv.p;
+            debug('Setting parallel to: '+g.parallel);
+        } else {
+            console.error('Invalid setting for -p: '+argv.p+', using default "-p 5".');
+        }
     }
     if (argv.v) {
         g.verbose = true;
@@ -87,16 +109,60 @@ function cmdLineArgs(argv) {
         g.warnings = true;
         debug('Now displaying warnings.');
     }
-    if (is.nonEmptyStr(argv.path)) {
-        var path = path.resolve(argv.path);
-        if (fs.existsSync(path)) {
-            process.chdir(path);
+    if (argv.t) {
+        g.testOutput = true;
+        debug('Now displaying test output.');
+    }
+    if (argv.version) {
+        var ver = require('./package.json').version;
+        console.log('flashlight v'+ver);
+        process.exit(0);
+    }
+    if (is.nonEmptyStr(argv.packageJson)) {
+        var pathToPackage = path.resolve(argv.packageJson);
+        console.log('pathToPackage:',pathToPackage);
+        if (fs.existsSync(pathToPackage)) {
+            process.chdir(path.dirname(pathToPackage));
             debug('Setting current working directory to: '+path);
         } else {
-            debug('Failed to set current working directory to: '+path+
+            console.error('Failed to set current working directory to: '+path+
                  ', the path does not exist.');
+            process.exit(1);
         }
     }
+}
+
+function showHelp() {
+    console.log('Usage: flashlight [-flags] [--options]\n');
+    console.log('Flags:\n');
+    console.log('    -a    Display all modules in report. By default, only the modules');
+    console.log('          with errors are displayed, or if "-w" is set, only those');
+    console.log('          modules with errors or warnings.');
+    console.log('\n');
+    console.log('    -l    Display license, if available.');
+    console.log('\n');
+    console.log('    -p #  Sets the number of concurrent tasks to #, where # is a positive');
+    console.log('          integer. The default is "-p 5".');
+    console.log('\n');
+    console.log('    -t    Displays the output from the tests (more readable with "-p 1")');
+    console.log('          The default is to not display test output.');
+    console.log('\n');
+    console.log('    -v    Verbose flag. Show messages displaying what flashlight is doing.');
+    console.log('          The default has verbose disabled.');
+    console.log('\n');
+    console.log('    -w    Display warnings in the module report. By default, warnings are');
+    console.log('          not displayed.');
+    console.log('\n');
+    console.log('Options:\n');
+    console.log('    --help');
+    console.log('          Shows this screen.');
+    console.log('\n');
+    console.log('    --packageJson <path to a package.json file>');
+    console.log('          Process the module described by the file. If not specified,');
+    console.log('          uses the current working directory and looks for a package.json.');
+    console.log('\n');
+    console.log('    --version');
+    console.log('          Shows the current version of flashlight.');
 }
 
 /**
@@ -106,7 +172,12 @@ function cmdLineArgs(argv) {
  * @param {Function} cb The callback when the function is complete.
  */
 function getLatestVersions(testArray, parallel, cb) {
+    console.log('typeof testArray', typeof testArray);
+    have(arguments, { testArry: 'obj', parallel: 'num', cb: 'func' });
+
     function getVersion(obj, cb) {
+        have(arguments, { obj: 'obj', cb: 'func' });
+
         if (!obj || !obj.name)  return cb();
         npm.load({ loglevel: 'silent' }, function (err) {
             if (npm && npm.registry && npm.registry.log && npm.registry.log.level)
@@ -148,6 +219,13 @@ function getLatestVersions(testArray, parallel, cb) {
  * @param {Function} cb The callback when the function is complete.
  */
 function runTests(testArray, parallel, report, cb) {
+    have(arguments, {
+        testArry: 'obj',
+        parallel: 'num',
+        report: 'obj',
+        cb: 'func'
+    });
+
     console.log('Running "npm install" and "npm test" for each module.');
     async.mapLimit(testArray, parallel, async.apply(testModule, report), function(err) {
         if (err) debug(err.message);
@@ -163,24 +241,22 @@ function runTests(testArray, parallel, report, cb) {
  * @param {Function} cb The callback, called when done. An error indicates the tests failed.
  */
 function spawnChild(cmd, args, cwd, cb) {
-    have(arguments, { cmd: 'str', args: 'str array', cwd: 'str', cb: 'func'});
+    have(arguments, { cmd: 'str', args: 'str array', cwd: 'str', cb: 'func' });
 
     var spawn = require('child_process').spawn;
     var child = spawn(cmd, args, {cwd:cwd});
 
     // we need these handlers - some tests use stdout & stderr
     child.stdout.on('data', function (data) {
-        //debug('stdout: '+data.toString().white);
+        if (g.testOutput) process.stdout.write(data);
     });
 
     child.stderr.on('data', function (data) {
-        //debug('stderr: '+data.toString().red);
+        if (g.testOutput) process.stderr.write(data);
     });
 
     child.on('close', function (code) {
         if (code !== 0) {
-            if (g.verbose)
-                console.error('"'+cmd+' '+args.join(' ')+'" exited with error code: '+code);
             return cb(new Error('exited with code: '+code));
         } else {
             cb();
@@ -231,7 +307,7 @@ function testModule(report, obj, cb) {
     if (!mreport.latest && obj.latest) {
         mreport.latest = obj.latest;
         if (semver.gt(mreport.latest, ver)) {
-            mreport.warnings.push('version '+ver+' is outdated, latest version: '+mreport.latest);
+            mreport.warnings.push('version '+ver+' is outdated, the latest version is: '+mreport.latest);
         }
     }
 
@@ -246,7 +322,10 @@ function testModule(report, obj, cb) {
             if (g.verbose)
                 console.log('Starting "npm test '+module.name+'"');
             spawnChild('npm', ['test'], cwd, function(err) {
-                if (err) { return cb(); }
+                if (err) {
+                    if (g.verbose) console.error('Tests for '+module.name+': '+err.message);
+                    return cb();
+                }
                 debug('completed "npm test '+module.name+'"');
                 mreport.testsPassing = true;
                 cb();
@@ -290,19 +369,15 @@ function createTestArray(moduleTree, testArray) {
 function renderReport(report) {
     have(arguments, { report: 'obj' });
 
-    // FIXME: Check if still need errors and warnings here
-    delete report.errors;
-    delete report.warnings;
     writeToFile('./report.js', report);
-
 
     for (var mName in report) {
         if (!report.hasOwnProperty(mName)) continue;
+        if (mName === 'errors' || mName === 'warnings')  continue;
         var mData = report[mName];
         if (!mData)  return;
-        if (mName === 'errors' || mName === 'warnings')  continue;
         var mReport = [];
-        var doReport = false;
+        var doReport = g.showAll ? true : false;
         var i;
 
         var title = sprintf('\n%s - %s\n', mName, mData.description);
@@ -314,34 +389,41 @@ function renderReport(report) {
             var vData = mData[mVer];
             if (!vData) continue;
 
-            mReport.push(sprintf('Report for version %s:\n', mVer));
+            if (g.showLicense) {
+                if (vData.license)
+                    mReport.push('License: '+vData.license);
+                else
+                    mReport.push('License: Unavailable');
+            }
+            mReport.push(sprintf('Version %s:\n', mVer));
+
+            var tests;
+            if (!vData.testsPassing) {
+                if (vData.scripts_test &&vData.scripts_test !== 'echo "Error: '+
+                    'no test specified" && exit 1') {
+                    tests = 'tests are failing';
+                } else {
+                    tests = 'there are no tests';
+                }
+                doReport = true;
+                vData.errors.push(tests);
+            }
 
             for (i=0; i<vData.depChain.length; i++) {
-                mReport.push('    '+vData.depChain[i]+' ('+mVer+')\n');
+                if (vData.depChain.length === 1)
+                    mReport.push(sprintf('    Dependency chain: '+vData.depChain[i]+'\n'));
+                else
+                    mReport.push(sprintf('    Dependency chain %2d: '+vData.depChain[i]+'\n', i+1));
             }
 
             for (i=0; i<vData.errors.length; i++) {
-                mReport.push('    error: '+vData.errors[i]+' ('+mVer+')\n');
+                mReport.push('    error: '+vData.errors[i]+'\n');
                 doReport = true;
             }
 
             for (i=0; g.warnings && i<vData.warnings.length; i++) {
                 mReport.push('    warning: '+vData.warnings[i]+'\n');
                 doReport = true;
-            }
-
-            var tests;
-            if (vData.testsPassing) {
-                tests = 'tests passing';
-            } else {
-                if (vData.scripts_test &&vData.scripts_test !== 'echo "Error: '+
-                    'no test specified" && exit 1') {
-                    tests = 'tests failing on version: '+mVer;
-                } else {
-                    tests = 'no tests for version: '+mVer;
-                }
-                doReport = true;
-                mReport.push(sprintf('    %s\n', tests));
             }
         }
         if (doReport && mReport.length > 1) {
@@ -444,12 +526,19 @@ function inspectModule(module, report) {
     var mreport = report[module.name][ver] = {};
     mreport.errors = [];
     mreport.warnings = [];
+    if (module.engine && module.engine.node && !mreport.engine_node) {
+        mreport.engine_node = module.engine.node;
+        if (!semver.satisfies(process.version, mreport.engine_node)) {
+            mreport.errors.push('version of Node.js ('+process.version+
+                                ') does not satisfy engine.node: '+
+                                mreport.engine_node);
+        }
+    }
 
     // Any attribute you are interested in, place here
     // it will be put in module by checkDepVersions
     var toDo = [
         { attr: 'scripts.test', err: true },
-        { attr: 'engine.node', err: false },
         { attr: 'version', err: true },
         { attr: 'repository.url', err: false },
         { attr: 'bugs.url', err: false },
@@ -468,8 +557,6 @@ function inspectModule(module, report) {
     checkDepVersions(module, 'devDependencies', mreport);
 
     var util = require('util');
-    debug('-=-=-=-> mreport:'+util.inspect(mreport,{colors:true,depth:null}));
-    debug('>>>>>>>> module:'+util.inspect(mreport,{colors:true,depth:null}));
     // additional checking
     if (ver === NO_VERSION) mreport.version = NO_VERSION;
     if (mreport.version !== NO_VERSION && !semver.valid(mreport.version)) {
