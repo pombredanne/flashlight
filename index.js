@@ -11,14 +11,12 @@ var is = require('is2');
 var NO_VERSION = 'NO_VERSION';
 var debug = require('debug')('flashlight');
 var packageDeps = require('package-deps');
-//var util = require('util');
 var assert = require('assert');
 var npm = require('npm');
 var argv = require('optimist').argv;
 var fs = require('fs');
 
-
-// globals for functionality
+// globals to store command-line switches
 var g = {
     parallel: 5,
     verbose: false,
@@ -28,11 +26,13 @@ var g = {
 
 /**
  * Where execution starts. Uses package-deps to locate all the package.json
- * files. We gather all the modules in testArray.
+ * files. We gather all the modules in testArray. Then, we get the latest
+ * and run the tests. At the conclusion, we run the tests.
+ * @param {Object} argv The command line arguments from Optimist.
  */
-function main() {
+function main(argv) {
 
-    cmdLineArgs();
+    cmdLineArgs(argv);
     var report = {};
     var testArray = [];
 
@@ -72,8 +72,9 @@ function main() {
 
 /**
  * Handle the command line arguments, by setting the correct globals.
+ * @param {Object} The command-line arguments from optimist.
  */
-function cmdLineArgs() {
+function cmdLineArgs(argv) {
     if (argv.p) {
         g.parallel = argv.p;
         debug('Setting parallel to: '+g.parallel);
@@ -98,13 +99,16 @@ function cmdLineArgs() {
     }
 }
 
+/**
+ * Get the latest version for each discovered module using NPM's API.
+ * @param {Object[]} testArray an array of objects describing the modules to test
+ * @param {Number} parallel The amount of concurrent tasks in mapSeriesLimit
+ * @param {Function} cb The callback when the function is complete.
+ */
 function getLatestVersions(testArray, parallel, cb) {
-
     function getVersion(obj, cb) {
         if (!obj || !obj.name)  return cb();
         npm.load({ loglevel: 'silent' }, function (err) {
-            //var util = require('util');
-            //console.log(util.inspect(npm.registry.log.level, {colors:true,depth:null}));
             if (npm && npm.registry && npm.registry.log && npm.registry.log.level)
                 npm.registry.log.level = 'silent';
             if (err) return cb(err);
@@ -135,6 +139,14 @@ function getLatestVersions(testArray, parallel, cb) {
     });
 }
 
+/**
+ * Runs the tests using mapLimit with the number of concurrent tasks specified 
+ * in the parallel parameter.
+ * @param {Object[]} testArray an array of objects describing the modules to test
+ * @param {Number} parallel The amount of concurrent tasks in mapSeriesLimit
+ * @param {Object} report An object containing the results of the testing/inspection
+ * @param {Function} cb The callback when the function is complete.
+ */
 function runTests(testArray, parallel, report, cb) {
     console.log('Running "npm install" and "npm test" for each module.');
     async.mapLimit(testArray, parallel, async.apply(testModule, report), function(err) {
@@ -145,6 +157,8 @@ function runTests(testArray, parallel, report, cb) {
 
 /**
  * Perform a command in the appropriate directory. Calls a callback when done.
+ * @param {String} cmd The command to execute.
+ * @param {String[]} args The command-line arguments passed to cmd.
  * @param {String} cwd The working directory for the `npm test` command.
  * @param {Function} cb The callback, called when done. An error indicates the tests failed.
  */
@@ -177,8 +191,8 @@ function spawnChild(cmd, args, cwd, cb) {
 /**
  * Using the path to discovered package.json, parse the implied module
  * dependendcy chain.
- * @param {String} Qualified path to package.json
- * @return {String} Describing the implied module dependency chain
+ * @param {String} pathToPkgJson Qualified path to package.json
+ * @return {String} A string describing the module dependencies
  */
 function depChainFromPath(pathToPkgJson) {
     have(arguments, { pathToPkgJson: 'str' });
@@ -191,6 +205,12 @@ function depChainFromPath(pathToPkgJson) {
     return pathToPkgJson;
 }
 
+/**
+ * Will test the module and place the result in the report object.
+ * @param {Object} report An object to hold the results for later display
+ * @param {Object} obj An object with the module information to test (from testArray)
+ * @param {Function} cb The callback.
+ */
 function testModule(report, obj, cb) {
     have(arguments, { report: 'obj', obj: 'obj', cb: 'func' });
 
@@ -208,6 +228,15 @@ function testModule(report, obj, cb) {
     mreport.testsPassing = false;
     if (!mreport.depChain)  mreport.depChain = [];
     mreport.depChain.push(depChainFromPath(obj.packageJson));
+    console.log('tm - 1');
+    if (!mreport.latest && obj.latest) {
+        console.log('tm - 2',obj.latest,'  - ', ver);
+        mreport.latest = obj.latest;
+        if (semver.gt(mreport.latest, ver)) {
+            console.log('tm - 3');
+            mreport.warnings.push('version '+ver+' is outdated, latest version: '+mreport.latest);
+        }
+    }
 
     if (testable) {
         debug('testing '+module.name+' ('+ver+')');
@@ -232,9 +261,9 @@ function testModule(report, obj, cb) {
 }
 
 /**
- * Iterates through the array of modules, inspecting each module. This could
- * be done in parallel.
- * @param {Object[]} modules An array of module objects.
+ * Iterates through the array of modules, inspecting each module.
+ * @param {Object[]} moduleTree An array of module objects for reporting.
+ * @param {Object[]} testArray An array of module objects for testing.
  */
 function createTestArray(moduleTree, testArray) {
     have(arguments, { moduleTree: 'obj', report: 'obj' });
@@ -290,7 +319,6 @@ function renderReport(report) {
 
             mReport.push(sprintf('Report for version %s:\n', mVer));
 
-
             for (i=0; i<vData.depChain.length; i++) {
                 mReport.push('    '+vData.depChain[i]+' ('+mVer+')\n');
             }
@@ -300,7 +328,7 @@ function renderReport(report) {
                 doReport = true;
             }
 
-            for (i=0; g.warnings && i<vData.errors.length; i++) {
+            for (i=0; g.warnings && i<vData.warnings.length; i++) {
                 mReport.push('    warning: '+vData.warnings[i]+'\n');
                 doReport = true;
             }
