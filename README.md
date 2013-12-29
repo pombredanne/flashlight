@@ -50,6 +50,7 @@ In the future, I will add:
 * Non-zero exit codes when errors are found and warnings when -w is present.
 * Ability to flag modules having any of a list of licenses as errors.
 * Ability to read configuration from a config file and environment variables.
+* Tests
 
 ## LICENSE
 The MIT License (MIT)
