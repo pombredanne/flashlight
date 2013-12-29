@@ -100,16 +100,13 @@ function cmdLineArgs() {
 
 function getLatestVersions(testArray, parallel, cb) {
 
-    /*
-    var cl = process.stdout.write;
-    if (!g.verbose) process.stdout.write = function(a,b,c,d,e,f) {
-        cl('=====>BOOM:',a,b,c,d,e,f);
-    };
-    */
-
     function getVersion(obj, cb) {
         if (!obj || !obj.name)  return cb();
         npm.load({ loglevel: 'silent' }, function (err) {
+            //var util = require('util');
+            //console.log(util.inspect(npm.registry.log.level, {colors:true,depth:null}));
+            if (npm && npm.registry && npm.registry.log && npm.registry.log.level)
+                npm.registry.log.level = 'silent';
             if (err) return cb(err);
             var silent = true;      // make npm not chatty on stdout
             npm.commands.view([obj.name], silent, function (err, data) {
@@ -134,7 +131,6 @@ function getLatestVersions(testArray, parallel, cb) {
     console.log('Getting latest version information from npmjs.org.');
     async.mapLimit(testArray, parallel, getVersion, function(err) {
         if (err) debug(err.message);
-        //if (!g.verbose) process.stdout.write = cl;
         cb();
     });
 }
