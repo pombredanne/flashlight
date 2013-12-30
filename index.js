@@ -1,6 +1,24 @@
 #!/usr/bin/env node
+/**
+ * @fileOverview
+ * This is the entry point for flashlight. At the bottom of this file is the
+ * code:
+ *     main(argv);
+ * which starts execution. The code discovers all the dependencies by reading
+ * all the package.json files. Each dependency is check and, at the end of
+ * main() a report is produced.
+ */
 'use strict';
-require('colors');
+
+// for testing
+exports.exports = {
+    getLatestVersions: getLatestVersions,
+    runTests: runTests,
+    testModule: testModule,
+    createTestArray: createTestArray,
+    inspectModule: inspectModule,
+};
+
 require('sprintf.js');
 var async = require('async');
 var path = require('path');
@@ -8,16 +26,16 @@ var semver = require('semver');
 var have = require('have');
 var _ = require('lodash');
 var is = require('is2');
-var NO_VERSION = 'NO_VERSION';
 var debug = require('debug')('flashlight');
 var packageDeps = require('package-deps');
 var assert = require('assert');
-var npm = require('npm');
 var argv = require('optimist').argv;
-var fs = require('fs');
+var misc = require('./lib/misc');
+var verUtil = require('./lib/version');
+var NO_VERSION = 'NO_VERSION';
 
 // globals to store command-line switches
-var g = {
+var g = global.g = {
     parallel: 5,
     verbose: false,
     warnings: false,
@@ -36,7 +54,7 @@ var g = {
 function main(argv) {
     have(arguments, { argv: 'obj' });
 
-    cmdLineArgs(argv);
+    misc.cmdLineArgs(argv, g);
     var report = {};
     var testArray = [];
 
@@ -61,8 +79,9 @@ function main(argv) {
     }
 
     // do 2 things in order:
-    // 1- latest version for each module
+    // 1- get latest version for each module
     // 2- run the tests for each module
+    // After both of the above are done, a report is written to stdout
     async.series([
         async.apply(getLatestVersions, testArray, g.parallel),
         async.apply(runTests, testArray, g.parallel, report)
@@ -75,97 +94,6 @@ function main(argv) {
 }
 
 /**
- * Handle the command line arguments, by setting the correct globals.
- * @param {Object} The command-line arguments from optimist.
- */
-function cmdLineArgs(argv) {
-    have(arguments, { argv: 'obj' });
-
-    if (argv.help) {
-        showHelp();
-        process.exit(0);
-    }
-    if (argv.a) {
-        g.showAll = argv.a;
-        debug('Setting showAll to: '+g.showAll);
-    }
-    if (argv.l) {
-        g.showLicense = argv.l;
-        debug('Setting showLicense to: '+g.showLicense);
-    }
-    if (argv.p) {
-        if (is.positiveInt(argv.p)) {
-            g.parallel = argv.p;
-            debug('Setting parallel to: '+g.parallel);
-        } else {
-            console.error('Invalid setting for -p: '+argv.p+', using default "-p 5".');
-        }
-    }
-    if (argv.v) {
-        g.verbose = true;
-        debug('Setting verbose to: '+g.verbose);
-    }
-    if (argv.w) {
-        g.warnings = true;
-        debug('Now displaying warnings.');
-    }
-    if (argv.t) {
-        g.testOutput = true;
-        debug('Now displaying test output.');
-    }
-    if (argv.version) {
-        var ver = require('./package.json').version;
-        console.log('flashlight v'+ver);
-        process.exit(0);
-    }
-    if (is.nonEmptyStr(argv.packageJson)) {
-        var pathToPackage = path.resolve(argv.packageJson);
-        console.log('pathToPackage:',pathToPackage);
-        if (fs.existsSync(pathToPackage)) {
-            process.chdir(path.dirname(pathToPackage));
-            debug('Setting current working directory to: '+path);
-        } else {
-            console.error('Failed to set current working directory to: '+path+
-                 ', the path does not exist.');
-            process.exit(1);
-        }
-    }
-}
-
-function showHelp() {
-    console.log('Usage: flashlight [-flags] [--options]\n');
-    console.log('Flags:\n');
-    console.log('    -a    Display all modules in report. By default, only the modules');
-    console.log('          with errors are displayed, or if "-w" is set, only those');
-    console.log('          modules with errors or warnings.');
-    console.log('\n');
-    console.log('    -l    Display license, if available.');
-    console.log('\n');
-    console.log('    -p #  Sets the number of concurrent tasks to #, where # is a positive');
-    console.log('          integer. The default is "-p 5".');
-    console.log('\n');
-    console.log('    -t    Displays the output from the tests (more readable with "-p 1")');
-    console.log('          The default is to not display test output.');
-    console.log('\n');
-    console.log('    -v    Verbose flag. Show messages displaying what flashlight is doing.');
-    console.log('          The default has verbose disabled.');
-    console.log('\n');
-    console.log('    -w    Display warnings in the module report. By default, warnings are');
-    console.log('          not displayed.');
-    console.log('\n');
-    console.log('Options:\n');
-    console.log('    --help');
-    console.log('          Shows this screen.');
-    console.log('\n');
-    console.log('    --packageJson <path to a package.json file>');
-    console.log('          Process the module described by the file. If not specified,');
-    console.log('          uses the current working directory and looks for a package.json.');
-    console.log('\n');
-    console.log('    --version');
-    console.log('          Shows the current version of flashlight.');
-}
-
-/**
  * Get the latest version for each discovered module using NPM's API.
  * @param {Object[]} testArray an array of objects describing the modules to test
  * @param {Number} parallel The amount of concurrent tasks in mapSeriesLimit
@@ -175,36 +103,8 @@ function getLatestVersions(testArray, parallel, cb) {
     console.log('typeof testArray', typeof testArray);
     have(arguments, { testArry: 'obj', parallel: 'num', cb: 'func' });
 
-    function getVersion(obj, cb) {
-        have(arguments, { obj: 'obj', cb: 'func' });
-
-        if (!obj || !obj.name)  return cb();
-        npm.load({ loglevel: 'silent' }, function (err) {
-            if (npm && npm.registry && npm.registry.log && npm.registry.log.level)
-                npm.registry.log.level = 'silent';
-            if (err) return cb(err);
-            var silent = true;      // make npm not chatty on stdout
-            npm.commands.view([obj.name], silent, function (err, data) {
-                if (err) { return cb(err); }
-                for (var key in data) {
-                    if (!data.hasOwnProperty(key)) continue;
-                    if (data[key] && data[key].versions && data[key].versions.length) {
-                        var len = data[key].versions.length;
-                        obj.latest = data[key].versions[len-1];
-                        if (g.verbose)
-                            console.log('Latest version for '+obj.name+': '+obj.latest);
-                        return cb();
-                    }
-                }
-                debug('getLatestVersions: No version found');
-                obj.latest = '?.?.?';
-                return cb();
-            });
-        });
-    }
-
     console.log('Getting latest version information from npmjs.org.');
-    async.mapLimit(testArray, parallel, getVersion, function(err) {
+    async.mapLimit(testArray, parallel, verUtil.getVersion, function(err) {
         if (err) debug(err.message);
         cb();
     });
@@ -234,54 +134,6 @@ function runTests(testArray, parallel, report, cb) {
 }
 
 /**
- * Perform a command in the appropriate directory. Calls a callback when done.
- * @param {String} cmd The command to execute.
- * @param {String[]} args The command-line arguments passed to cmd.
- * @param {String} cwd The working directory for the `npm test` command.
- * @param {Function} cb The callback, called when done. An error indicates the tests failed.
- */
-function spawnChild(cmd, args, cwd, cb) {
-    have(arguments, { cmd: 'str', args: 'str array', cwd: 'str', cb: 'func' });
-
-    var spawn = require('child_process').spawn;
-    var child = spawn(cmd, args, {cwd:cwd});
-
-    // we need these handlers - some tests use stdout & stderr
-    child.stdout.on('data', function (data) {
-        if (g.testOutput) process.stdout.write(data);
-    });
-
-    child.stderr.on('data', function (data) {
-        if (g.testOutput) process.stderr.write(data);
-    });
-
-    child.on('close', function (code) {
-        if (code !== 0) {
-            return cb(new Error('exited with code: '+code));
-        } else {
-            cb();
-        }
-    });
-}
-
-/**
- * Using the path to discovered package.json, parse the implied module
- * dependendcy chain.
- * @param {String} pathToPkgJson Qualified path to package.json
- * @return {String} A string describing the module dependencies
- */
-function depChainFromPath(pathToPkgJson) {
-    have(arguments, { pathToPkgJson: 'str' });
-    pathToPkgJson = pathToPkgJson.replace(path.join(process.cwd(),'..'), '');
-    pathToPkgJson = pathToPkgJson.replace(/\/package\.json$/, '');
-    pathToPkgJson = pathToPkgJson.replace(/node_modules/g, '');
-    pathToPkgJson = pathToPkgJson.split(path.sep);
-    pathToPkgJson = pathToPkgJson.filter(function(s) { return is.nonEmptyStr(s); });
-    pathToPkgJson = pathToPkgJson.join(' > ');
-    return pathToPkgJson;
-}
-
-/**
  * Will test the module and place the result in the report object.
  * @param {Object} report An object to hold the results for later display
  * @param {Object} obj An object with the module information to test (from testArray)
@@ -303,7 +155,7 @@ function testModule(report, obj, cb) {
     var mreport = report[module.name][ver];
     mreport.testsPassing = false;
     if (!mreport.depChain)  mreport.depChain = [];
-    mreport.depChain.push(depChainFromPath(obj.packageJson));
+    mreport.depChain.push(misc.depChainFromPath(obj.packageJson));
     if (!mreport.latest && obj.latest) {
         mreport.latest = obj.latest;
         if (semver.gt(mreport.latest, ver)) {
@@ -316,14 +168,14 @@ function testModule(report, obj, cb) {
         if (g.verbose)
             console.log('Starting "npm install '+module.name+'"');
         var cwd = path.dirname(obj.packageJson);
-        spawnChild('npm', ['install'], cwd, function(err) {
+        misc.spawnChild('npm', ['install'], cwd, function(err) {
             if (err) { return cb(err); }
             debug('completed "npm install '+module.name+'"');
             if (g.verbose)
                 console.log('Starting "npm test '+module.name+'"');
-            spawnChild('npm', ['test'], cwd, function(err) {
+            misc.spawnChild('npm', ['test'], cwd, function(err) {
                 if (err) {
-                    if (g.verbose) console.error('Tests for '+module.name+': '+err.message);
+                    if (g.verbose) console.error('Tests for '+module.name+' '+err.message);
                     return cb();
                 }
                 debug('completed "npm test '+module.name+'"');
@@ -369,7 +221,7 @@ function createTestArray(moduleTree, testArray) {
 function renderReport(report) {
     have(arguments, { report: 'obj' });
 
-    writeToFile('./report.js', report);
+    misc.writeToFile('./report.js', report);
 
     for (var mName in report) {
         if (!report.hasOwnProperty(mName)) continue;
@@ -436,71 +288,6 @@ function renderReport(report) {
 }
 
 /**
- * A convenience function to iterate down a string path into an object. If no
- * such path exists, returns the default value, else the value of the property.
- * @param {Object} obj The object to traverse.
- * @param {String} property The string name of the property.
- * @param defaultVal The default value to return if no property was found.
- * @return Property value if found, else the default value.
- */
-function getPropertyVal(obj, property, defaultVal) {
-    have(arguments, { obj: 'obj', property: 'str' });
-
-    var properties = property.split('.');
-    var currVal = obj;
-
-    for (var i=0; i<properties.length; i++) {
-        var currPropertyName = properties[i];
-        if (!currVal.hasOwnProperty(currPropertyName))
-            return defaultVal;
-        currVal = currVal[currPropertyName];
-    }
-
-    return currVal;
-}
-
-/**
- * Checks a module property for a value and reports either an error or warning
- * (depending on the value of isError) and adds the value and error or warning
- * the reportForMod object.
- * @param {Object} module The package.json structure for a module.
- * @param {String} target The property name we are looking for.
- * @param {Boolean} isError If the property is missing, this determines if it an error or warning.
- * @param {Object} reportForMod The object where the results are stored.
- */
-function checkAttr(module, target, isError, reportForMod) {
-    have(arguments, {module:'o', target:'s', isError:'b', reportForMod:'o'});
-
-    var val = getPropertyVal(module, target, false);
-    if (val === false) {
-        var list = isError ? reportForMod.errors: reportForMod.warnings;
-        list.push('package.json missing: '+target);
-        return;
-    }
-
-    var key = target.replace('.', '_');
-    reportForMod[key] = val;
-}
-/**
- * Check dependencies for wildcard versions.
- */
-function checkDepVersions(module, property, mreport) {
-    have(arguments, {module: 'obj', property: 'str', mreport: 'obj'});
-    if (!module[property])  return;
-
-    _.forOwn(module[property], function(key, val) {
-        if (val === '' || val === '*')
-            mreport.errors.push(property+' for '+key+'\'s version is a wildcard');
-        else if (val.match(/^>(.)+/) !== null)
-            mreport.errors.push(property+' for '+key+'\'s version is '+val);
-        else if (val.match(/^<(.)+/) !== null)
-            mreport.warning.push(property+' for '+key+'\'s version is '+val);
-        else if (val.match(/^~(.)+/) !== null)
-            mreport.warning.push(property+' for '+key+'\'s version is '+val);
-    });
-}
-
-/**
  * Inspect each module, flagging any issues.
  * @param {obj} module The object of the package.json file.
  * @param {Object} report The object where results are stored.
@@ -550,13 +337,12 @@ function inspectModule(module, report) {
         report[module.name].description = module.description;
 
     _.forEach(toDo, function(item) {
-        checkAttr(module, item.attr, item.err, mreport);
+        misc.checkAttr(module, item.attr, item.err, mreport);
     });
 
-    checkDepVersions(module, 'dependencies', mreport);
-    checkDepVersions(module, 'devDependencies', mreport);
+    verUtil.checkDepVersions(module, 'dependencies', mreport);
+    verUtil.checkDepVersions(module, 'devDependencies', mreport);
 
-    var util = require('util');
     // additional checking
     if (ver === NO_VERSION) mreport.version = NO_VERSION;
     if (mreport.version !== NO_VERSION && !semver.valid(mreport.version)) {
@@ -571,12 +357,6 @@ function inspectModule(module, report) {
 
     // return true if the module is testable
     return mreport.scripts_test ? true : false;
-}
-
-function writeToFile(fileName, data) {
-    var fs = require('fs');
-    var inspect = require('util').inspect;
-    fs.writeFileSync(fileName, inspect(data,{depth:null}));
 }
 
 // start the execution
