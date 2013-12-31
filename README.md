@@ -27,6 +27,7 @@ Flags:
 <table>
 <tr><td><b>Flag</b></td><td><b>Meaning</b></td></tr>
 <tr><td>-a</td><td>Display all modules in report. By default, only the modules with errors are displayed, or if "-w" is set, only those modules with errors or warnings.</td></tr>
+<tr><td>-d #</td><td>Limit the depth of module discovery to # levels. If # < 1, then the depth is unlimited. The default is 1, the modules in your package.json.</td></tr>
 <tr><td>-l</td><td>Display license, if available.</td></tr>
 <tr><td>-p #</td><td>Sets the number of concurrent tasks to #, where # is a positive integer. The default is "-p 5".</td></tr>
 <tr><td>-t</td><td>Displays the output from the tests (more readable with "-p 1") The default is to not display test output.</td></tr>
@@ -38,9 +39,37 @@ Options:
 <table>
 <tr><td><b>Option</b></td><td><b>Meaning</b></td></tr>
 <tr><td>--help</td><td>Shows the help screen and exits.</td></tr>
-<tr><td>--packageJson PATH</td><td>Process the module described by the path. If not specified, uses the current working directory and looks for a package.json.</td></tr>
+<tr><td>--packagejson PATH</td><td>Process the module described by the path. If not specified, uses the current working directory and looks for a package.json.</td></tr>
 <tr><td>--version</td><td>Shows the current version of flashlight and exits.</td></tr>
+<tr><td>--whitelist "comma,separated,module,name,list"</td><td>Skips all tests for the specified modules.</td></tr>
 </table>
+
+If there is a "flashlight.json" file in the current working directory, it is
+read and the existing defaults are over-written with the values in the file.
+Flashlight sets flags and options after the JSON file is read and the command
+line settings overwrite the values in "flashlight.json".
+
+The current working directory is where you run flashlight and not the directory
+set by --packagejson. An example flashlight.json file follows:
+
+```JSON
+    {
+      "depth": 1,
+      "path": "/Users/edmond/src/flashlight",
+      "parallel": 8,
+      "showAll": true,
+      "showLicense": true,
+      "testOutput": false,
+      "verbose": true,
+      "warnings": false,
+      "whitelist": {
+      "async": true,
+      "lodash": true,
+      "npm": true,
+      "debug": true
+      }
+    }
+```
 
 ## Examples
 Use the package.json in the current directory, run the tests for all dependencies and sub-dependencies, display the output, use verbose to show what is happening and have a concurrency of 1:

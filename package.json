@@ -1,6 +1,6 @@
 {
   "name": "flashlight",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Command-line tool to inspect your Node.js project dependencies for problems. ",
   "main": "index.js",
   "scripts": {

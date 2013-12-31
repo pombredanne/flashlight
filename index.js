@@ -35,6 +35,7 @@ exports.exports = {
 
 require('sprintf.js');
 var async = require('async');
+var fs = require('fs');
 var path = require('path');
 var semver = require('semver');
 var have = require('have');
@@ -51,15 +52,15 @@ var NO_VERSION = 'NO VERSION';  // constant for when we don't have a version
 
 // globals to store command-line switches
 var g = global.g = {
+    depth: 1,
+    path: process.cwd(),
     parallel: 5,
+    showAll: false,
+    showLicense: false,
+    testOutput: false,
     verbose: false,
     warnings: false,
-    path: process.cwd(),
-    testOutput: false,
-    showLicense: false,
-    showAll: false,
-    depth: undefined
-
+    whitelist: {}
 };
 
 /**
@@ -71,14 +72,24 @@ var g = global.g = {
 function main(argv) {
     have(arguments, { argv: 'obj' });
 
+    if (fs.existsSync('./flashlight.json')) {
+        _.extend(g, require('./flashlight.json'));
+        if (g.verbose)
+            console.log('Loaded config values from "./flashlight.json".');
+    }
+
     misc.cmdLineArgs(argv, g);
-    var report = {};
-    var testArray = [];
+    var report = {};        // store the results of the tests
+    var testArray = [];     // flat list of dependencies
 
     if (g.verbose)
         console.log('Finding the dependencies.');
-    console.log('depth:',g.depth);
-    var deps = packageDeps.findAll('./', 1);
+    var deps = packageDeps.findAll('./', g.depth);
+    if (deps && deps.packageJson) delete deps.packageJson;
+    //var util = require('util');
+    //console.log('===> DEPs:',util.inspect(deps,{colors:true,depth:null}));
+    //misc.writeToFile('deps.js',deps);
+    //misc.writeToFile('testArray.js',testArray);
     createTestArray(deps, testArray);
 
     if (testArray.length < 1) {
@@ -87,11 +98,10 @@ function main(argv) {
     }
 
     console.log('Found %s modules to inspect and test.', testArray.length);
-    console.log('Doing "npm install" and "npm test" for each module. ');
 
     if (g.verbose && testArray.length > g.parallel && testArray.length > 2 &&
         g.parallel > 1) {
-        console.log('Processing %s, doing %s modules in parallel.',
+        console.log('Processing %s total and testing %s modules concurrently.',
                     testArray.length, g.parallel);
     }
 
@@ -120,16 +130,20 @@ function createTestArray(moduleTree, testArray) {
     have(arguments, { moduleTree: 'obj', report: 'obj' });
     assert.ok(is.array(testArray));
 
-    if (!moduleTree.packageJson)  return;
-
-    testArray.push({
-        packageJson: moduleTree.packageJson,
-        ver: moduleTree.ver,
-        name: moduleTree.name
-    });
+    if (moduleTree.packageJson) {
+        testArray.push({
+            packageJson: moduleTree.packageJson,
+            ver: moduleTree.ver,
+            name: moduleTree.name
+        });
+    }
 
     for (var modName in moduleTree.dependencies) {
         if (!moduleTree[modName] || !moduleTree[modName].packageJson) return;
+        if (g.whitelist[modName]) {
+            if (g.verbose) console.log('Skipping whitelisted module: '+modName);
+            continue;
+        }
         var ver = moduleTree.dependencies[modName];
         moduleTree[modName].ver = ver;
         moduleTree[modName].name = modName;
@@ -144,10 +158,10 @@ function createTestArray(moduleTree, testArray) {
  * @param {Function} cb The callback when the function is complete.
  */
 function getLatestVersions(testArray, parallel, cb) {
-    console.log('typeof testArray', typeof testArray);
     have(arguments, { testArry: 'obj', parallel: 'num', cb: 'func' });
 
-    console.log('Getting latest version information from npmjs.org.');
+    if (g.verbose)
+        console.log('Getting latest version information from npmjs.org.');
     async.mapLimit(testArray, parallel, verUtil.getVersion, function(err) {
         if (err) debug(err.message);
         cb();
@@ -170,7 +184,8 @@ function runTests(testArray, parallel, report, cb) {
         cb: 'func'
     });
 
-    console.log('Running "npm install" and "npm test" for each module.');
+    if (g.verbose)
+        console.log('Running "npm install" and "npm test" for each module.');
     async.mapLimit(testArray, parallel, async.apply(testModule, report),
         function(err) {
             if (err) debug(err.message);
@@ -320,8 +335,8 @@ function testModule(report, obj, cb) {
  */
 function renderReport(report) {
     have(arguments, { report: 'obj' });
-
-    misc.writeToFile('./report.js', report);
+    var issues = 0;
+    var modules = 0;
 
     for (var mName in report) {
         if (!report.hasOwnProperty(mName)) continue;
@@ -340,12 +355,13 @@ function renderReport(report) {
 
             var vData = mData[mVer];
             if (!vData) continue;
+            modules++;
 
             if (g.showLicense) {
                 if (vData.license)
-                    mReport.push('License: '+vData.license);
+                    mReport.push('License: '+vData.license+'\n');
                 else
-                    mReport.push('License: Unavailable');
+                    mReport.push('License: Unavailable'+'\n');
             }
             mReport.push(sprintf('Version %s:\n', mVer));
 
@@ -374,11 +390,13 @@ function renderReport(report) {
             for (i=0; i<vData.errors.length; i++) {
                 mReport.push('    error: '+vData.errors[i]+'\n');
                 doReport = true;
+                issues++;
             }
 
             for (i=0; g.warnings && i<vData.warnings.length; i++) {
                 mReport.push('    warning: '+vData.warnings[i]+'\n');
                 doReport = true;
+                issues++;
             }
         }
         if (doReport && mReport.length > 1) {
@@ -388,6 +406,15 @@ function renderReport(report) {
             }
         }
     }
+    if (issues === 0) {
+        console.log('\nNo issues were found in '+modules+' module'+
+                    (modules > 1 ? 's.' : '.'));
+    } else {
+        console.log('\n'+issues+' issue'+(issues > 1 ? 's were' : ' was')+
+                    ' found in '+modules+' module'+
+                    (modules > 1 ? 's.' : '.'));
+    }
+    process.exit(issues);
 }
 
 // start the execution
