@@ -2,6 +2,19 @@ flashlight
 ==========
 
 A command-line tool to inspect your Node.js project dependencies for problems.
+Each module is tested to see if:
+
+- engine.node is satisfied by current node version
+- module has a:
+    - scripts.test, error if missing
+    - version, error if missing
+    - repository.url, warning if missing
+    - bugs.url, warning if missing
+    - homepage, warning if missing
+    - license, warning if missing
+ - version is semver compliant, error if not
+ - tests run successfully with 'npm test', error if not
+ - the version is the latest from NPM, warning if not
 
 ## Installation
 
