@@ -71,6 +71,9 @@ set by --packagejson. An example flashlight.json file follows:
     }
 ```
 
+When flashlight exits, the exit code is the number of errors found. If the -w
+flag was present, then the exit code is the sum of the errors and warnings.
+
 ## Examples
 Use the package.json in the current directory, run the tests for all dependencies and sub-dependencies, display the output, use verbose to show what is happening and have a concurrency of 1:
 
@@ -83,16 +86,6 @@ Use the package.json in ~/src/myproject, display all modules and their license w
 Use the package.json in the current working directory and find errors and warnings for all dependencies:
 
     flashlight -w
-
-## Note
-This is new. Please expect and report issues. Your feedback is welcome. 
-
-In the future, I will add:
-
-* Non-zero exit codes when errors are found and warnings when -w is present.
-* Ability to flag modules having any of a list of licenses as errors.
-* Ability to read configuration from a config file and environment variables.
-* Tests
 
 ## LICENSE
 The MIT License (MIT)
