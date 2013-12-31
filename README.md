@@ -63,10 +63,10 @@ set by --packagejson. An example flashlight.json file follows:
       "verbose": true,
       "warnings": false,
       "whitelist": {
-      "async": true,
-      "lodash": true,
-      "npm": true,
-      "debug": true
+        "async": true,
+        "lodash": true,
+        "npm": true,
+        "debug": true
       }
     }
 ```
