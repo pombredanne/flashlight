@@ -1,0 +1,16 @@
+{
+  "depth": 1,
+  "path": "\/Users\/edmond\/src\/flashlight",
+  "parallel": 8,
+  "showAll": true,
+  "showLicense": true,
+  "testOutput": false,
+  "verbose": false,
+  "warnings": false,
+  "whitelist": {
+    "async": true,
+    "lodash": true,
+    "npm": true,
+    "debug": true
+  }
+}
