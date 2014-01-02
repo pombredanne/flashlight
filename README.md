@@ -13,6 +13,7 @@ Each module is tested to see if:
     * homepage, warning if missing
     * license, warning if missing
 * version is semver compliant, error if not
+* version is not "\*" and does not start with ">", "<" or "~", error if not
 * tests run successfully with 'npm test', error if not
 * the version is the latest from NPM, warning if not
 
